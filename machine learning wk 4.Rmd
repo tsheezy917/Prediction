@@ -1,0 +1,134 @@
+---
+title: "Exercise Predictions"
+output: html_document
+---
+
+```{r, echo=FALSE}
+```
+
+
+#Objective
+
+Build a model that accurately predicts the 5 categories of exercise.  The data set consists of 160 varibles and 19,622 observations.  
+
+The categories (A-E) are a serious of correct and incorrect exercise moves.  
+```{r, echo=FALSE, eval=FALSE}
+install.packages("dplyr", repos=c("http://rstudio.org/_packages", "http://cran.rstudio.com"))
+yinstall.packages("caret", repos=c("http://rstudio.org/_packages", "http://cran.rstudio.com"))
+install.packages("purrr")
+install.packages("stringr")
+install.packages("rebus")
+install.packages("ipred")
+install.packages("e1071")
+```
+
+
+```{r, echo=FALSE}
+#load packages
+library(dplyr)
+library(caret)
+library(purrr)
+library(stringr)
+library(rebus)
+library(ipred)
+library(e1071)
+```
+
+```{r}
+#read in the data and convert to tibble
+train_activ <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", stringsAsFactors = FALSE)
+test_activ <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", stringsAsFactors = FALSE)
+train_activ <- tbl_df(train_activ)
+test_activ <- tbl_df(test_activ)
+col_names <- names(train_activ)
+```
+
+
+##Narrowing down predictors
+The first thing to do is the examin the data and narrow down the predictors.  Since there are so many, it would likely make our results much easy to interpret if we narrow them down.  There are lots of NA values that we will impute later, but for now we'll get the info sorted.  
+
+First, we extract all the integer and numeric columns.  The data set contains name, date and time value information, which doesn't seem relevant to the task at hand so these will be excluded.  
+
+```{r}
+num_int_Vect <- NULL
+
+for(col in 1:length(train_activ)) {
+  
+  if(is.numeric(train_activ[[col]]) == T | is.integer(train_activ[[col]]) == T)
+    num_int_Vect <- append(col, num_int_Vect)
+}
+
+num_int_df <- tbl_df(train_activ[num_int_Vect])
+```
+
+
+Since I will be relying on my own statistics, I remove all of the "stat" columns, such as average, standard deviation and variance that give an unnecessary summary of the data.  
+
+I also removed the name, observation number and time stamp information as these didn't seem to have much predictive value.  
+
+Finally, I convert all of the remaining data into numeric (continuous) data.  
+
+```{r}
+
+#remove unusable stat columns 
+train_names <- names(num_int_df)
+stats <- which(str_detect(train_names, START %R% or("avg", "stddev", "var")))
+train_df <- num_int_df[-stats]
+train_df <- train_df[, -c(80:83)]
+train_df <- tbl_df(map(train_df, as.numeric))
+train_names <- names(train_df)
+```
+
+
+#Impute missing data
+
+The remaining data frame has lots of NA values, making our machine learning algorithms unusable.  I impute the missing data by using a the "bagImpute" method, a form of bootstrap resampling.  
+
+Having narrowed down my predictors and imputed the missing data, I set the training partitions.
+
+```{r}
+#impute missing data
+classe_df <- tbl_df(train_activ$classe)
+train_df2 <- cbind(train_df, classe_df)
+train_df2 <- rename(train_df2, classe = value)
+preProc <- preProcess(train_df2[, 1:79], method = "bagImpute")
+train_df2 <- predict(preProc, train_df2)
+
+test_index <- which(names(test_activ) %in% names(train_df))
+test_df <- test_activ[test_index]
+test_df <- predict(preProc, test_df)
+
+
+#set partitions and trainers 
+
+train_part <- createDataPartition(y = train_df2$classe, p = .75, list = FALSE)
+train <- train_df2[train_part, ]
+test_cv <- train_df2[-train_part, ]
+```
+
+#Predicting and testing accuracy
+
+I decide to use a random forest predictor, given that we still have a fairly large set of predictors (79).  I split the training set into two partitions to allow me to estimate the out of sample error.
+
+```{r}
+#predict to see the effectiveness of the model
+train_param <- trainControl(method = "cv", number = 5)
+train_cv_fit <- train(classe ~., data = train, method = "rf", trControl = train_param)
+test_cv_pred <- predict(train_cv_fit, newdata = test_cv)
+
+confusionMatrix(test_cv_pred, test_cv$classe)
+train_cv_fit$finalModel
+```
+
+#Final Prediction
+
+Now that we have a model with an approximate accuracy of 99%, we predict the outcomes of the test set.  
+
+```{r}
+(final_predict <- predict(train_cv_fit, newdata = test_df))
+```
+
+
+
+
+
